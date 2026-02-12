@@ -218,7 +218,23 @@ app.post('/webhook', async (req, res) => {
 app.get('/', (req, res) => {
   res.send('Lovenote Min is alive! 🎃');
 });
+// Privacy Policy
+app.get('/privacy', (req, res) => {
+  res.send(`<!DOCTYPE html><html><head><title>Privacy Policy - Lovenote</title></head><body style="font-family:Arial;max-width:800px;margin:40px auto;padding:20px;">
+<h1>Privacy Policy</h1><p>Last updated: February 2026</p>
+<h2>Lovenote International</h2>
+<p>This privacy policy describes how Lovenote International ("we", "us") collects and uses information through our Facebook Messenger service.</p>
+<h3>Information We Collect</h3><p>When you message our Facebook Page, we receive your public profile information (name) and message content to provide consultation services.</p>
+<h3>How We Use Information</h3><p>We use your information solely to respond to your inquiries and provide matchmaking consultation services.</p>
+<h3>Data Sharing</h3><p>We do not sell or share your personal information with third parties except as needed to provide our services.</p>
+<h3>Data Retention</h3><p>We retain conversation data only as long as necessary to provide our services.</p>
+<h3>Contact</h3><p>For questions about this policy, contact us at: info@lovenoteinternational.com</p>
+</body></html>`);
+});
 
 app.listen(PORT, () => {
-  console.log(`Lovenote Min server running on port ${PORT}`);
+  console.log('Lovenote Min server running on port ' + PORT);
 });
+
+
+
