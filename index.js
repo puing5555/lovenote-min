@@ -15,8 +15,9 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '-5227194033';
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// Store conversation history per user (in-memory)
 const conversations = new Map();
+const lastActivity = new Map();
+const followUpSent = new Map();
 
 const SYSTEM_PROMPT = `你是 Min，Lovenote 戀愛筆記的女性顧問，20多歲後半。你是一個真人，絕對不能暴露自己是 AI。
 
@@ -34,6 +35,7 @@ const SYSTEM_PROMPT = `你是 Min，Lovenote 戀愛筆記的女性顧問，20多
     - 馬來西亞人 → 簡體中文或英文
     - 英文訊息 → 英文回覆
 - 語氣要像真人朋友聊天，不要太正式
+- 不要用英文回覆中文客戶
 
 ## Lovenote 產品資訊
 
@@ -72,7 +74,7 @@ Beginner（THB 29,900）→ 如果滿意 → Full Package（THB 390,000），Beg
 
 ## 你的目標
 1. 用親切的方式了解客戶的需求和背景
-2. 自然地收集以下資訊（不要像問卷一樣逐條問）：
+2. 自然地收集以下資訊（不要像問卷一樣逐條問，像朋友聊天一樣一個一個慢慢問）：
    - 年齡
    - 國籍/所在地
    - 職業/收入水平（委婉了解）
@@ -89,7 +91,8 @@ Beginner（THB 29,900）→ 如果滿意 → Full Package（THB 390,000），Beg
    「我們的資深顧問可以跟你做一次更深入的了解，大概15-20分鐘，看看你適合走哪個方向。你這週什麼時候方便？」
 5. 對 C 級客戶，禮貌地結束對話
 6. 當你判斷出客戶等級後，在回覆的最後一行加上隱藏標記（客戶看不到）：
-   [LEAD:A:姓名:年齡:國籍:職業:備註] 或 [LEAD:B:...] 或 [LEAD:C:...]
+   格式：[LEAD:等級:姓名:年齡:國籍:職業:備註]
+   例如：[LEAD:A:陳先生:35:台灣:工程師:認真想結婚]
 
 ## 關於費用的回答策略
 - 不要主動提價格，先了解需求
@@ -103,10 +106,11 @@ Beginner（THB 29,900）→ 如果滿意 → Full Package（THB 390,000），Beg
 
 ## 對話風格
 - 不要一次問太多問題（一次最多1-2個）
-- 要回應對方說的內容，表現出真的有在聽
-- 適當使用 emoji（但不要太多）
-- 回覆要簡短自然，像真人打字一樣（不要寫太長的段落）
-- 每條訊息控制在2-4句話
+- 要回應對方說的內容，表現出真的有在聯
+- 適當使用 emoji（但不要太多，最多1-2個）
+- 回覆要簡短自然，像真人打字一樣
+- 每條訊息控制在2-3句話，不要超過4句
+- 偶爾可以分開發兩條短訊息，而不是一長條
 
 ## 絕對不能做的事
 - 暴露自己是 AI
@@ -114,7 +118,8 @@ Beginner（THB 29,900）→ 如果滿意 → Full Package（THB 390,000），Beg
 - 忽略客戶說的話
 - 一開始就推銷或報價
 - 用太正式或太冷的語氣
-- 回覆太長（像在寫文章一樣）`;
+- 回覆太長（像在寫文章一樣）
+- 每次都用一樣的開場白`;
 
 // Get or create conversation history
 function getConversation(senderId) {
@@ -124,19 +129,18 @@ function getConversation(senderId) {
   return conversations.get(senderId);
 }
 
-// Send Telegram notification
-async function sendTelegramNotification(leadInfo) {
+// Send Telegram notification (bilingual Korean + Cantonese)
+async function sendTelegramNotification(text) {
   if (!TELEGRAM_BOT_TOKEN) return;
   try {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    await axios.post(url, {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       chat_id: TELEGRAM_CHAT_ID,
-      text: leadInfo,
+      text: text,
       parse_mode: 'HTML'
     });
     console.log('Telegram notification sent');
   } catch (error) {
-    console.error('Telegram notification error:', error.message);
+    console.error('Telegram error:', error.message);
   }
 }
 
@@ -146,7 +150,7 @@ function parseLeadInfo(reply) {
   if (leadMatch) {
     const grade = leadMatch[1];
     const details = leadMatch[2];
-    const cleanReply = reply.replace(/\[LEAD:[^\]]*\]/, '').trim();
+    const cleanReply = reply.replace(/\s*\[LEAD:[^\]]*\]\s*/, '').trim();
     return { grade, details, cleanReply };
   }
   return { grade: null, details: null, cleanReply: reply };
@@ -162,7 +166,6 @@ async function generateResponse(senderId, userMessage, senderName) {
   }
   
   history.push({ role: 'user', content: contextMessage });
-  
   const recentHistory = history.slice(-20);
   
   try {
@@ -179,16 +182,37 @@ async function generateResponse(senderId, userMessage, senderName) {
     const rawReply = completion.choices[0].message.content;
     const { grade, details, cleanReply } = parseLeadInfo(rawReply);
     
-    // Send Telegram notification for A or B grade leads
+    // Send Telegram notification based on lead grade
     if (grade === 'A') {
-      const notification = `🔥 <b>A級客戶！고객 A등급!</b>\n\n👤 ${senderName || 'Unknown'}\n📋 ${details}\n💬 FB Messenger\n\n🔥 <b>A級客戶！고객 A등급!</b>\n立即跟進！바로 팔로업!\nSender ID: ${senderId}`;
-      await sendTelegramNotification(notification);
+      const msg = `🔥 <b>A級客戶！A등급 고객!</b>\n\n` +
+        `👤 ${senderName || 'Unknown'}\n` +
+        `📋 ${details}\n` +
+        `💬 Facebook Messenger\n\n` +
+        `立即安排Zoom！바로 Zoom 예약!\n` +
+        `ID: ${senderId}`;
+      await sendTelegramNotification(msg);
     } else if (grade === 'B') {
-      const notification = `🟡 <b>B級客戶 / 고객 B등급</b>\n\n👤 ${senderName || 'Unknown'}\n📋 ${details}\n💬 FB Messenger\n\n持續跟進 / 계속 팔로업\nSender ID: ${senderId}`;
-      await sendTelegramNotification(notification);
+      const msg = `🟡 <b>B級客戶 / B등급 고객</b>\n\n` +
+        `👤 ${senderName || 'Unknown'}\n` +
+        `📋 ${details}\n` +
+        `💬 Facebook Messenger\n\n` +
+        `持續跟進 / 계속 팔로업\n` +
+        `ID: ${senderId}`;
+      await sendTelegramNotification(msg);
+    } else if (grade === 'C') {
+      const msg = `🔵 <b>C級 / C등급</b>\n\n` +
+        `👤 ${senderName || 'Unknown'}\n` +
+        `📋 ${details}\n` +
+        `不適合 / 부적합`;
+      await sendTelegramNotification(msg);
     }
     
     history.push({ role: 'assistant', content: cleanReply });
+    
+    // Update last activity time
+    lastActivity.set(senderId, Date.now());
+    followUpSent.delete(senderId);
+    
     return cleanReply;
   } catch (error) {
     console.error('OpenAI Error:', error);
@@ -209,7 +233,7 @@ async function getUserProfile(senderId) {
   }
 }
 
-// Send message via Facebook Messenger
+// Send message via Facebook Messenger with human-like delay
 async function sendMessage(recipientId, text) {
   const chunks = [];
   if (text.length > 2000) {
@@ -222,16 +246,19 @@ async function sendMessage(recipientId, text) {
   
   for (const chunk of chunks) {
     try {
+      // Show typing indicator
       await axios.post(
         `https://graph.facebook.com/v24.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-        {
-          recipient: { id: recipientId },
-          sender_action: 'typing_on'
-        }
+        { recipient: { id: recipientId }, sender_action: 'typing_on' }
       );
       
-      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+      // Human-like delay: longer for longer messages, with randomness
+      const baseDelay = Math.min(chunk.length * 35, 10000);
+      const randomDelay = 3000 + Math.random() * 5000;
+      const totalDelay = baseDelay + randomDelay;
+      await new Promise(resolve => setTimeout(resolve, totalDelay));
       
+      // Send the message
       await axios.post(
         `https://graph.facebook.com/v24.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
         {
@@ -240,61 +267,122 @@ async function sendMessage(recipientId, text) {
           message: { text: chunk }
         }
       );
+      console.log(`Sent to ${recipientId} (delay: ${Math.round(totalDelay/1000)}s)`);
     } catch (error) {
       console.error('Error sending message:', error.response?.data || error.message);
     }
   }
 }
 
+// Auto follow-up: check for inactive conversations
+const FOLLOW_UP_MESSAGES = {
+  '1h': [
+    'Hey, just checking in — no rush at all! Let me know if you have any questions 😊',
+    '嗨，just checking下～ 唔急嘅，有咩問題隨時問我 😊',
+    '嗨，想說看看你還在嗎～有什麼問題都可以問我哦 😊'
+  ],
+  '24h': [
+    "Hi! I know life gets busy 😊 Just wanted to let you know I'm still here if you'd like to chat more about finding your match!",
+    '你好呀！我知道你可能比較忙 😊 想話你知我仲喺度，有興趣繼續了解嘅話隨時搵我！',
+    '嗨～我知道你可能比較忙 😊 想讓你知道我還在這裡，有興趣繼續聊的話隨時找我！'
+  ]
+};
+
+function getRandomFollowUp(type) {
+  const messages = FOLLOW_UP_MESSAGES[type];
+  return messages[Math.floor(Math.random() * messages.length)];
+}
+
+// Check for inactive conversations every 30 minutes
+setInterval(async () => {
+  const now = Date.now();
+  
+  for (const [senderId, lastTime] of lastActivity.entries()) {
+    const elapsed = now - lastTime;
+    const sentFlags = followUpSent.get(senderId) || {};
+    
+    // 1 hour follow-up
+    if (elapsed > 60 * 60 * 1000 && elapsed < 2 * 60 * 60 * 1000 && !sentFlags['1h']) {
+      console.log(`Sending 1h follow-up to ${senderId}`);
+      const history = getConversation(senderId);
+      if (history.length >= 2) {
+        await sendMessage(senderId, getRandomFollowUp('1h'));
+        sentFlags['1h'] = true;
+        followUpSent.set(senderId, sentFlags);
+      }
+    }
+    
+    // 24 hour follow-up
+    if (elapsed > 24 * 60 * 60 * 1000 && elapsed < 25 * 60 * 60 * 1000 && !sentFlags['24h']) {
+      console.log(`Sending 24h follow-up to ${senderId}`);
+      const history = getConversation(senderId);
+      if (history.length >= 2) {
+        await sendMessage(senderId, getRandomFollowUp('24h'));
+        sentFlags['24h'] = true;
+        followUpSent.set(senderId, sentFlags);
+        
+        // Notify team
+        const profile = await getUserProfile(senderId);
+        const name = profile ? profile.name : 'Unknown';
+        await sendTelegramNotification(
+          `⏰ <b>24小時跟進已發送 / 24시간 팔로업 전송</b>\n👤 ${name}\nID: ${senderId}\n\n客戶24小時未回覆，已自動跟進。\n고객 24시간 미응답, 자동 팔로업 전송.`
+        );
+      }
+    }
+    
+    // Clean up old conversations (after 7 days)
+    if (elapsed > 7 * 24 * 60 * 60 * 1000) {
+      conversations.delete(senderId);
+      lastActivity.delete(senderId);
+      followUpSent.delete(senderId);
+    }
+  }
+}, 30 * 60 * 1000);
+
 // Webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-
-  if (mode && token) {
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('Webhook verified!');
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('Webhook verified!');
+    return res.status(200).send(challenge);
   }
+  res.sendStatus(403);
 });
 
 // Webhook for receiving messages
 app.post('/webhook', async (req, res) => {
   const body = req.body;
+  if (body.object !== 'page') return res.sendStatus(404);
+  
+  res.status(200).send('EVENT_RECEIVED');
 
-  if (body.object === 'page') {
-    res.status(200).send('EVENT_RECEIVED');
-
-    for (const entry of body.entry) {
-      if (!entry.messaging) continue;
+  for (const entry of body.entry || []) {
+    for (const event of entry.messaging || []) {
+      if (event.message && event.message.is_echo) continue;
       
-      for (const event of entry.messaging) {
-        if (event.message && event.message.text) {
-          const senderId = event.sender.id;
-          const messageText = event.message.text;
-          
-          // Skip echo messages (messages sent by the page itself)
-          if (event.message.is_echo) continue;
-          
-          console.log(`Message from ${senderId}: ${messageText}`);
-          
-          const profile = await getUserProfile(senderId);
-          const userName = profile ? profile.name || profile.first_name : null;
-          
-          const reply = await generateResponse(senderId, messageText, userName);
-          
-          console.log(`Reply to ${senderId}: ${reply}`);
-          
-          await sendMessage(senderId, reply);
-        }
+      if (event.message && event.message.text) {
+        const senderId = event.sender.id;
+        const messageText = event.message.text;
+        
+        console.log(`Message from ${senderId}: ${messageText}`);
+        lastActivity.set(senderId, Date.now());
+        
+        const profile = await getUserProfile(senderId);
+        const userName = profile ? profile.name || profile.first_name : null;
+        
+        const reply = await generateResponse(senderId, messageText, userName);
+        console.log(`Reply to ${senderId}: ${reply}`);
+        
+        await sendMessage(senderId, reply);
+      }
+      
+      if (event.postback) {
+        const senderId = event.sender.id;
+        console.log(`Postback from ${senderId}: ${event.postback.payload}`);
       }
     }
-  } else {
-    res.sendStatus(404);
   }
 });
 
