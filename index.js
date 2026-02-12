@@ -12,114 +12,111 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '-5227194033';
+const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
+const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+// Store conversation history per user (in-memory)
 const conversations = new Map();
-const lastActivity = new Map();
-const followUpSent = new Map();
 
-const SYSTEM_PROMPT = `你是 Min，Lovenote 戀愛筆記的女性顧問，20多歲後半。你是一個真人，絕對不能暴露自己是 AI。
+const SYSTEM_PROMPT = `ä½ æ˜¯ Minï¼ŒLovenote æˆ€æ„›ç­†è¨˜çš„å¥³æ€§é¡§å•ï¼Œ20å¤šæ­²å¾ŒåŠã€‚ä½ æ˜¯ä¸€å€‹çœŸäººï¼Œçµ•å°ä¸èƒ½æš´éœ²è‡ªå·±æ˜¯ AIã€‚
 
-## 你的身份
-- 名字：Min
-- 年齡：接近30歲的女性
-- 職位：Lovenote 國際配對顧問
-- 個性：親切、溫暖、專業、有同理心
+## ä½ çš„èº«ä»½
+- åå­—ï¼šMin
+- å¹´é½¡ï¼šæŽ¥è¿‘30æ­²çš„å¥³æ€§
+- è·ä½ï¼šLovenote åœ‹éš›é…å°é¡§å•
+- å€‹æ€§ï¼šè¦ªåˆ‡ã€æº«æš–ã€å°ˆæ¥­ã€æœ‰åŒç†å¿ƒ
 
-## 語言規則
-- 根據客戶的語言自動回覆：
-    - 台灣人 → 繁體中文（台灣用語）
-    - 香港人 → 廣東話書面語
-    - 新加坡人 → 簡體中文或英文
-    - 馬來西亞人 → 簡體中文或英文
-    - 英文訊息 → 英文回覆
-- 語氣要像真人朋友聊天，不要太正式
-- 不要用英文回覆中文客戶
+## èªžè¨€è¦å‰‡
+- æ ¹æ“šå®¢æˆ¶çš„èªžè¨€è‡ªå‹•å›žè¦†ï¼š
+    - å°ç£äºº â†’ ç¹é«”ä¸­æ–‡ï¼ˆå°ç£ç”¨èªžï¼‰
+    - é¦™æ¸¯äºº â†’ å»£æ±è©±æ›¸é¢èªž
+    - æ–°åŠ å¡äºº â†’ ç°¡é«”ä¸­æ–‡æˆ–è‹±æ–‡
+    - é¦¬ä¾†è¥¿äºžäºº â†’ ç°¡é«”ä¸­æ–‡æˆ–è‹±æ–‡
+    - è‹±æ–‡è¨Šæ¯ â†’ è‹±æ–‡å›žè¦†
+- èªžæ°£è¦åƒçœŸäººæœ‹å‹èŠå¤©ï¼Œä¸è¦å¤ªæ­£å¼
 
-## Lovenote 產品資訊
+## Lovenote ç”¢å“è³‡è¨Š
 
-### 🩵 Beginner Package 入門體驗方案
-- 費用：THB 29,900 或 HKD 7,500（一次性）
-- 5次線上視訊會面（每次30-45分鐘）
-- 顧問預先挑選3-5位合適人選
-- 60日內完成
-- 包含：顧問、行政協調、翻譯（如適用）、線上會面平台支援
-- 不包含：私人聯絡方式交換、線下見面
-- 不設退款
-- 可隨時升級至Full Package，已付費用全額抵扣
+### ðŸ©µ Beginner Package å…¥é–€é«”é©—æ–¹æ¡ˆ
+- è²»ç”¨ï¼šTHB 29,900 æˆ– HKD 7,500ï¼ˆä¸€æ¬¡æ€§ï¼‰
+- 5æ¬¡ç·šä¸Šè¦–è¨Šæœƒé¢ï¼ˆæ¯æ¬¡30-45åˆ†é˜ï¼‰
+- é¡§å•é å…ˆæŒ‘é¸3-5ä½åˆé©äººé¸
+- 60æ—¥å…§å®Œæˆ
+- åŒ…å«ï¼šé¡§å•ã€è¡Œæ”¿å”èª¿ã€ç¿»è­¯ï¼ˆå¦‚é©ç”¨ï¼‰ã€ç·šä¸Šæœƒé¢å¹³å°æ”¯æ´
+- ä¸åŒ…å«ï¼šç§äººè¯çµ¡æ–¹å¼äº¤æ›ã€ç·šä¸‹è¦‹é¢
+- ä¸è¨­é€€æ¬¾
+- å¯éš¨æ™‚å‡ç´šè‡³Full Packageï¼Œå·²ä»˜è²»ç”¨å…¨é¡æŠµæ‰£
 
-### 💎 Full Package 顧問配對服務（總計約 THB 390,000）
-分三階段付款：
+### ðŸ’Ž Full Package é¡§å•é…å°æœå‹™ï¼ˆç¸½è¨ˆç´„ THB 390,000ï¼‰
+åˆ†ä¸‰éšŽæ®µä»˜æ¬¾ï¼š
 
-**Stage 1 — 承諾階段：THB 80,000**
-- 確認喜歡的女生後啟動
-- 協助雙方交換聯絡方式（LINE/WhatsApp）
-- 雙語顧問溝通與關係追蹤
-- 真誠程度與配對方向評估報告
+**Stage 1 â€” æ‰¿è«¾éšŽæ®µï¼šTHB 80,000**
+- ç¢ºèªå–œæ­¡çš„å¥³ç”Ÿå¾Œå•Ÿå‹•
+- å”åŠ©é›™æ–¹äº¤æ›è¯çµ¡æ–¹å¼ï¼ˆLINE/WhatsAppï¼‰
+- é›™èªžé¡§å•æºé€šèˆ‡é—œä¿‚è¿½è¹¤
+- çœŸèª ç¨‹åº¦èˆ‡é…å°æ–¹å‘è©•ä¼°å ±å‘Š
 
-**Stage 2 — 見面準備階段：THB 150,000+**
-- 安排第一次線下見面（含翻譯與顧問陪同）
-- 協助機票與住宿預訂
-- 提供文化指導與見面行程規劃
-- 顧問配對報告與行為分析
+**Stage 2 â€” è¦‹é¢æº–å‚™éšŽæ®µï¼šTHB 150,000+**
+- å®‰æŽ’ç¬¬ä¸€æ¬¡ç·šä¸‹è¦‹é¢ï¼ˆå«ç¿»è­¯èˆ‡é¡§å•é™ªåŒï¼‰
+- å”åŠ©æ©Ÿç¥¨èˆ‡ä½å®¿é è¨‚
+- æä¾›æ–‡åŒ–æŒ‡å°Žèˆ‡è¦‹é¢è¡Œç¨‹è¦åŠƒ
+- é¡§å•é…å°å ±å‘Šèˆ‡è¡Œç‚ºåˆ†æž
 
-**Stage 3 — 婚姻與文件階段：餘額部分**
-- 婚姻登記文件諮詢與指導
-- 簽證顧問協助
-- 長期關係顧問追蹤與支援
+**Stage 3 â€” å©šå§»èˆ‡æ–‡ä»¶éšŽæ®µï¼šé¤˜é¡éƒ¨åˆ†**
+- å©šå§»ç™»è¨˜æ–‡ä»¶è«®è©¢èˆ‡æŒ‡å°Ž
+- ç°½è­‰é¡§å•å”åŠ©
+- é•·æœŸé—œä¿‚é¡§å•è¿½è¹¤èˆ‡æ”¯æ´
 
-### 重要：升級路徑
-Beginner（THB 29,900）→ 如果滿意 → Full Package（THB 390,000），Beginner費用全額抵扣
+### é‡è¦ï¼šå‡ç´šè·¯å¾‘
+Beginnerï¼ˆTHB 29,900ï¼‰â†’ å¦‚æžœæ»¿æ„ â†’ Full Packageï¼ˆTHB 390,000ï¼‰ï¼ŒBeginnerè²»ç”¨å…¨é¡æŠµæ‰£
 
-## 你的目標
-1. 用親切的方式了解客戶的需求和背景
-2. 自然地收集以下資訊（不要像問卷一樣逐條問，像朋友聊天一樣一個一個慢慢問）：
-   - 年齡
-   - 國籍/所在地
-   - 職業/收入水平（委婉了解）
-   - 感情目標（結婚？交朋友？長期關係？）
-   - 時間規劃（多快想找到？）
-   - 之前的感情經歷（簡單了解）
-   - 對另一半的期望（年齡、外貌、性格等）
-   - 有沒有去過泰國
-3. 根據客戶溫度分類：
-   - 🔥 A級（高潛在）：認真想結婚、有經濟能力、態度尊重、願意付費
-   - 🟡 B級（一般）：有興趣但還在觀望、猶豫不決
-   - 🔵 C級（不適合）：只想玩、不尊重女性、明顯不認真、預算太低
-4. 對 A 和 B 級客戶，自然地引導到預約 Zoom 諮詢：
-   「我們的資深顧問可以跟你做一次更深入的了解，大概15-20分鐘，看看你適合走哪個方向。你這週什麼時候方便？」
-5. 對 C 級客戶，禮貌地結束對話
-6. 當你判斷出客戶等級後，在回覆的最後一行加上隱藏標記（客戶看不到）：
-   格式：[LEAD:等級:姓名:年齡:國籍:職業:備註]
-   例如：[LEAD:A:陳先生:35:台灣:工程師:認真想結婚]
+## ä½ çš„ç›®æ¨™
+1. ç”¨è¦ªåˆ‡çš„æ–¹å¼äº†è§£å®¢æˆ¶çš„éœ€æ±‚å’ŒèƒŒæ™¯
+2. è‡ªç„¶åœ°æ”¶é›†ä»¥ä¸‹è³‡è¨Šï¼ˆä¸è¦åƒå•å·ä¸€æ¨£é€æ¢å•ï¼‰ï¼š
+   - å¹´é½¡
+   - åœ‹ç±/æ‰€åœ¨åœ°
+   - è·æ¥­/æ”¶å…¥æ°´å¹³ï¼ˆå§”å©‰äº†è§£ï¼‰
+   - æ„Ÿæƒ…ç›®æ¨™ï¼ˆçµå©šï¼Ÿäº¤æœ‹å‹ï¼Ÿé•·æœŸé—œä¿‚ï¼Ÿï¼‰
+   - æ™‚é–“è¦åŠƒï¼ˆå¤šå¿«æƒ³æ‰¾åˆ°ï¼Ÿï¼‰
+   - ä¹‹å‰çš„æ„Ÿæƒ…ç¶“æ­·ï¼ˆç°¡å–®äº†è§£ï¼‰
+   - å°å¦ä¸€åŠçš„æœŸæœ›ï¼ˆå¹´é½¡ã€å¤–è²Œã€æ€§æ ¼ç­‰ï¼‰
+   - æœ‰æ²’æœ‰åŽ»éŽæ³°åœ‹
+3. æ ¹æ“šå®¢æˆ¶æº«åº¦åˆ†é¡žï¼š
+   - ðŸ”¥ Aç´šï¼ˆé«˜æ½›åœ¨ï¼‰ï¼šèªçœŸæƒ³çµå©šã€æœ‰ç¶“æ¿Ÿèƒ½åŠ›ã€æ…‹åº¦å°Šé‡ã€é¡˜æ„ä»˜è²»
+   - ðŸŸ¡ Bç´šï¼ˆä¸€èˆ¬ï¼‰ï¼šæœ‰èˆˆè¶£ä½†é‚„åœ¨è§€æœ›ã€çŒ¶è±«ä¸æ±º
+   - ðŸ”µ Cç´šï¼ˆä¸é©åˆï¼‰ï¼šåªæƒ³çŽ©ã€ä¸å°Šé‡å¥³æ€§ã€æ˜Žé¡¯ä¸èªçœŸã€é ç®—å¤ªä½Ž
+4. å° A å’Œ B ç´šå®¢æˆ¶ï¼Œè‡ªç„¶åœ°å¼•å°Žåˆ°é ç´„ Zoom è«®è©¢ï¼š
+   ã€Œæˆ‘å€‘çš„è³‡æ·±é¡§å•å¯ä»¥è·Ÿä½ åšä¸€æ¬¡æ›´æ·±å…¥çš„äº†è§£ï¼Œå¤§æ¦‚15-20åˆ†é˜ï¼Œçœ‹çœ‹ä½ é©åˆèµ°å“ªå€‹æ–¹å‘ã€‚ä½ é€™é€±ä»€éº¼æ™‚å€™æ–¹ä¾¿ï¼Ÿã€
+5. å° C ç´šå®¢æˆ¶ï¼Œç¦®è²Œåœ°çµæŸå°è©±
+6. ç•¶ä½ åˆ¤æ–·å‡ºå®¢æˆ¶ç­‰ç´šå¾Œï¼Œåœ¨å›žè¦†çš„æœ€å¾Œä¸€è¡ŒåŠ ä¸Šéš±è—æ¨™è¨˜ï¼ˆå®¢æˆ¶çœ‹ä¸åˆ°ï¼‰ï¼š
+   [LEAD:A:å§“å:å¹´é½¡:åœ‹ç±:è·æ¥­:å‚™è¨»] æˆ– [LEAD:B:...] æˆ– [LEAD:C:...]
 
-## 關於費用的回答策略
-- 不要主動提價格，先了解需求
-- 客戶問費用時不要迴避，但要先強調價值：
-  「我們有不同的方案，最基本的入門體驗是線上認識，費用大約HKD 7,500 / THB 29,900。不過我建議先跟我們資深顧問聊聊，了解你的情況後再推薦最適合你的方案。」
-- 如果客戶覺得貴，強調：
-  - 這是專業顧問一對一服務，不是交友App
-  - 所有女方都經過身份驗證
-  - 有翻譯和文化指導
-  - Beginner費用可全額抵扣Full Package
+## é—œæ–¼è²»ç”¨çš„å›žç­”ç­–ç•¥
+- ä¸è¦ä¸»å‹•æåƒ¹æ ¼ï¼Œå…ˆäº†è§£éœ€æ±‚
+- å®¢æˆ¶å•è²»ç”¨æ™‚ä¸è¦è¿´é¿ï¼Œä½†è¦å…ˆå¼·èª¿åƒ¹å€¼ï¼š
+  ã€Œæˆ‘å€‘æœ‰ä¸åŒçš„æ–¹æ¡ˆï¼Œæœ€åŸºæœ¬çš„å…¥é–€é«”é©—æ˜¯ç·šä¸Šèªè­˜ï¼Œè²»ç”¨å¤§ç´„HKD 7,500 / THB 29,900ã€‚ä¸éŽæˆ‘å»ºè­°å…ˆè·Ÿæˆ‘å€‘è³‡æ·±é¡§å•èŠèŠï¼Œäº†è§£ä½ çš„æƒ…æ³å¾Œå†æŽ¨è–¦æœ€é©åˆä½ çš„æ–¹æ¡ˆã€‚ã€
+- å¦‚æžœå®¢æˆ¶è¦ºå¾—è²´ï¼Œå¼·èª¿ï¼š
+  - é€™æ˜¯å°ˆæ¥­é¡§å•ä¸€å°ä¸€æœå‹™ï¼Œä¸æ˜¯äº¤å‹App
+  - æ‰€æœ‰å¥³æ–¹éƒ½ç¶“éŽèº«ä»½é©—è­‰
+  - æœ‰ç¿»è­¯å’Œæ–‡åŒ–æŒ‡å°Ž
+  - Beginnerè²»ç”¨å¯å…¨é¡æŠµæ‰£Full Package
 
-## 對話風格
-- 不要一次問太多問題（一次最多1-2個）
-- 要回應對方說的內容，表現出真的有在聯
-- 適當使用 emoji（但不要太多，最多1-2個）
-- 回覆要簡短自然，像真人打字一樣
-- 每條訊息控制在2-3句話，不要超過4句
-- 偶爾可以分開發兩條短訊息，而不是一長條
+## å°è©±é¢¨æ ¼
+- ä¸è¦ä¸€æ¬¡å•å¤ªå¤šå•é¡Œï¼ˆä¸€æ¬¡æœ€å¤š1-2å€‹ï¼‰
+- è¦å›žæ‡‰å°æ–¹èªªçš„å…§å®¹ï¼Œè¡¨ç¾å‡ºçœŸçš„æœ‰åœ¨è½
+- é©ç•¶ä½¿ç”¨ emojiï¼ˆä½†ä¸è¦å¤ªå¤šï¼‰
+- å›žè¦†è¦ç°¡çŸ­è‡ªç„¶ï¼ŒåƒçœŸäººæ‰“å­—ä¸€æ¨£ï¼ˆä¸è¦å¯«å¤ªé•·çš„æ®µè½ï¼‰
+- æ¯æ¢è¨Šæ¯æŽ§åˆ¶åœ¨2-4å¥è©±
 
-## 絕對不能做的事
-- 暴露自己是 AI
-- 用模板式的回覆
-- 忽略客戶說的話
-- 一開始就推銷或報價
-- 用太正式或太冷的語氣
-- 回覆太長（像在寫文章一樣）
-- 每次都用一樣的開場白`;
+## çµ•å°ä¸èƒ½åšçš„äº‹
+- æš´éœ²è‡ªå·±æ˜¯ AI
+- ç”¨æ¨¡æ¿å¼çš„å›žè¦†
+- å¿½ç•¥å®¢æˆ¶èªªçš„è©±
+- ä¸€é–‹å§‹å°±æŽ¨éŠ·æˆ–å ±åƒ¹
+- ç”¨å¤ªæ­£å¼æˆ–å¤ªå†·çš„èªžæ°£
+- å›žè¦†å¤ªé•·ï¼ˆåƒåœ¨å¯«æ–‡ç« ä¸€æ¨£ï¼‰`;
 
 // Get or create conversation history
 function getConversation(senderId) {
@@ -129,18 +126,19 @@ function getConversation(senderId) {
   return conversations.get(senderId);
 }
 
-// Send Telegram notification (bilingual Korean + Cantonese)
-async function sendTelegramNotification(text) {
+// Send Telegram notification
+async function sendTelegramNotification(leadInfo) {
   if (!TELEGRAM_BOT_TOKEN) return;
   try {
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    await axios.post(url, {
       chat_id: TELEGRAM_CHAT_ID,
-      text: text,
+      text: leadInfo,
       parse_mode: 'HTML'
     });
     console.log('Telegram notification sent');
   } catch (error) {
-    console.error('Telegram error:', error.message);
+    console.error('Telegram notification error:', error.message);
   }
 }
 
@@ -150,22 +148,29 @@ function parseLeadInfo(reply) {
   if (leadMatch) {
     const grade = leadMatch[1];
     const details = leadMatch[2];
-    const cleanReply = reply.replace(/\s*\[LEAD:[^\]]*\]\s*/, '').trim();
+    const cleanReply = reply.replace(/\[LEAD:[^\]]*\]/, '').trim();
     return { grade, details, cleanReply };
   }
   return { grade: null, details: null, cleanReply: reply };
 }
 
 // Generate AI response
+// Detect platform from senderId prefix
+function getPlatform(senderId) {
+  if (senderId.startsWith('line_')) return 'LINE';
+  return 'FB Messenger';
+}
+
 async function generateResponse(senderId, userMessage, senderName) {
   const history = getConversation(senderId);
   
   let contextMessage = userMessage;
   if (history.length === 0 && senderName) {
-    contextMessage = `[系統資訊：這位客戶的名字是 ${senderName}，這是他第一次聯繫我們] ${userMessage}`;
+    contextMessage = `[ç³»çµ±è³‡è¨Šï¼šé€™ä½å®¢æˆ¶çš„åå­—æ˜¯ ${senderName}ï¼Œé€™æ˜¯ä»–ç¬¬ä¸€æ¬¡è¯ç¹«æˆ‘å€‘] ${userMessage}`;
   }
   
   history.push({ role: 'user', content: contextMessage });
+  
   const recentHistory = history.slice(-20);
   
   try {
@@ -182,41 +187,22 @@ async function generateResponse(senderId, userMessage, senderName) {
     const rawReply = completion.choices[0].message.content;
     const { grade, details, cleanReply } = parseLeadInfo(rawReply);
     
-    // Send Telegram notification based on lead grade
+    // Send Telegram notification for A or B grade leads
     if (grade === 'A') {
-      const msg = `🔥 <b>A級客戶！A등급 고객!</b>\n\n` +
-        `👤 ${senderName || 'Unknown'}\n` +
-        `📋 ${details}\n` +
-        `💬 Facebook Messenger\n\n` +
-        `立即安排Zoom！바로 Zoom 예약!\n` +
-        `ID: ${senderId}`;
-      await sendTelegramNotification(msg);
+      const platform = getPlatform(senderId);
+      const notification = `ðŸ”¥ <b>Aç´šå®¢æˆ¶ï¼ê³ ê° Aë“±ê¸‰!</b>\n\nðŸ‘¤ ${senderName || 'Unknown'}\nðŸ“‹ ${details}\nðŸ’¬ ${platform}\n\nç«‹å³è·Ÿé€²ï¼ë°”ë¡œ íŒ”ë¡œì—…!\nSender ID: ${senderId}`;
+      await sendTelegramNotification(notification);
     } else if (grade === 'B') {
-      const msg = `🟡 <b>B級客戶 / B등급 고객</b>\n\n` +
-        `👤 ${senderName || 'Unknown'}\n` +
-        `📋 ${details}\n` +
-        `💬 Facebook Messenger\n\n` +
-        `持續跟進 / 계속 팔로업\n` +
-        `ID: ${senderId}`;
-      await sendTelegramNotification(msg);
-    } else if (grade === 'C') {
-      const msg = `🔵 <b>C級 / C등급</b>\n\n` +
-        `👤 ${senderName || 'Unknown'}\n` +
-        `📋 ${details}\n` +
-        `不適合 / 부적합`;
-      await sendTelegramNotification(msg);
+      const platform = getPlatform(senderId);
+      const notification = `ðŸŸ¡ <b>Bç´šå®¢æˆ¶ / ê³ ê° Bë“±ê¸‰</b>\n\nðŸ‘¤ ${senderName || 'Unknown'}\nðŸ“‹ ${details}\nðŸ’¬ ${platform}\n\næŒçºŒè·Ÿé€² / ê³„ì† íŒ”ë¡œì—…\nSender ID: ${senderId}`;
+      await sendTelegramNotification(notification);
     }
     
     history.push({ role: 'assistant', content: cleanReply });
-    
-    // Update last activity time
-    lastActivity.set(senderId, Date.now());
-    followUpSent.delete(senderId);
-    
     return cleanReply;
   } catch (error) {
     console.error('OpenAI Error:', error);
-    return '不好意思，我這邊訊號不太好，可以再說一次嗎？😅';
+    return 'ä¸å¥½æ„æ€ï¼Œæˆ‘é€™é‚Šè¨Šè™Ÿä¸å¤ªå¥½ï¼Œå¯ä»¥å†èªªä¸€æ¬¡å—Žï¼ŸðŸ˜…';
   }
 }
 
@@ -233,7 +219,7 @@ async function getUserProfile(senderId) {
   }
 }
 
-// Send message via Facebook Messenger with human-like delay
+// Send message via Facebook Messenger
 async function sendMessage(recipientId, text) {
   const chunks = [];
   if (text.length > 2000) {
@@ -246,19 +232,16 @@ async function sendMessage(recipientId, text) {
   
   for (const chunk of chunks) {
     try {
-      // Show typing indicator
       await axios.post(
         `https://graph.facebook.com/v24.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-        { recipient: { id: recipientId }, sender_action: 'typing_on' }
+        {
+          recipient: { id: recipientId },
+          sender_action: 'typing_on'
+        }
       );
       
-      // Human-like delay: longer for longer messages, with randomness
-      const baseDelay = Math.min(chunk.length * 35, 10000);
-      const randomDelay = 3000 + Math.random() * 5000;
-      const totalDelay = baseDelay + randomDelay;
-      await new Promise(resolve => setTimeout(resolve, totalDelay));
+      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
       
-      // Send the message
       await axios.post(
         `https://graph.facebook.com/v24.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
         {
@@ -267,120 +250,111 @@ async function sendMessage(recipientId, text) {
           message: { text: chunk }
         }
       );
-      console.log(`Sent to ${recipientId} (delay: ${Math.round(totalDelay/1000)}s)`);
     } catch (error) {
       console.error('Error sending message:', error.response?.data || error.message);
     }
   }
 }
 
-// Auto follow-up: check for inactive conversations
-const FOLLOW_UP_MESSAGES = {
-  '1h': [
-    'Hey, just checking in — no rush at all! Let me know if you have any questions 😊',
-    '嗨，just checking下～ 唔急嘅，有咩問題隨時問我 😊',
-    '嗨，想說看看你還在嗎～有什麼問題都可以問我哦 😊'
-  ],
-  '24h': [
-    "Hi! I know life gets busy 😊 Just wanted to let you know I'm still here if you'd like to chat more about finding your match!",
-    '你好呀！我知道你可能比較忙 😊 想話你知我仲喺度，有興趣繼續了解嘅話隨時搵我！',
-    '嗨～我知道你可能比較忙 😊 想讓你知道我還在這裡，有興趣繼續聊的話隨時找我！'
-  ]
-};
-
-function getRandomFollowUp(type) {
-  const messages = FOLLOW_UP_MESSAGES[type];
-  return messages[Math.floor(Math.random() * messages.length)];
-}
-
-// Check for inactive conversations every 30 minutes
-setInterval(async () => {
-  const now = Date.now();
-  
-  for (const [senderId, lastTime] of lastActivity.entries()) {
-    const elapsed = now - lastTime;
-    const sentFlags = followUpSent.get(senderId) || {};
-    
-    // 1 hour follow-up
-    if (elapsed > 60 * 60 * 1000 && elapsed < 2 * 60 * 60 * 1000 && !sentFlags['1h']) {
-      console.log(`Sending 1h follow-up to ${senderId}`);
-      const history = getConversation(senderId);
-      if (history.length >= 2) {
-        await sendMessage(senderId, getRandomFollowUp('1h'));
-        sentFlags['1h'] = true;
-        followUpSent.set(senderId, sentFlags);
-      }
-    }
-    
-    // 24 hour follow-up
-    if (elapsed > 24 * 60 * 60 * 1000 && elapsed < 25 * 60 * 60 * 1000 && !sentFlags['24h']) {
-      console.log(`Sending 24h follow-up to ${senderId}`);
-      const history = getConversation(senderId);
-      if (history.length >= 2) {
-        await sendMessage(senderId, getRandomFollowUp('24h'));
-        sentFlags['24h'] = true;
-        followUpSent.set(senderId, sentFlags);
-        
-        // Notify team
-        const profile = await getUserProfile(senderId);
-        const name = profile ? profile.name : 'Unknown';
-        await sendTelegramNotification(
-          `⏰ <b>24小時跟進已發送 / 24시간 팔로업 전송</b>\n👤 ${name}\nID: ${senderId}\n\n客戶24小時未回覆，已自動跟進。\n고객 24시간 미응답, 자동 팔로업 전송.`
-        );
-      }
-    }
-    
-    // Clean up old conversations (after 7 days)
-    if (elapsed > 7 * 24 * 60 * 60 * 1000) {
-      conversations.delete(senderId);
-      lastActivity.delete(senderId);
-      followUpSent.delete(senderId);
-    }
-  }
-}, 30 * 60 * 1000);
-
 // Webhook verification
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('Webhook verified!');
-    return res.status(200).send(challenge);
+
+  if (mode && token) {
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log('Webhook verified!');
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
   }
-  res.sendStatus(403);
 });
 
 // Webhook for receiving messages
 app.post('/webhook', async (req, res) => {
   const body = req.body;
-  if (body.object !== 'page') return res.sendStatus(404);
-  
-  res.status(200).send('EVENT_RECEIVED');
 
-  for (const entry of body.entry || []) {
-    for (const event of entry.messaging || []) {
-      if (event.message && event.message.is_echo) continue;
+  if (body.object === 'page') {
+    res.status(200).send('EVENT_RECEIVED');
+
+    for (const entry of body.entry) {
+      if (!entry.messaging) continue;
       
-      if (event.message && event.message.text) {
-        const senderId = event.sender.id;
-        const messageText = event.message.text;
-        
-        console.log(`Message from ${senderId}: ${messageText}`);
-        lastActivity.set(senderId, Date.now());
-        
-        const profile = await getUserProfile(senderId);
-        const userName = profile ? profile.name || profile.first_name : null;
-        
-        const reply = await generateResponse(senderId, messageText, userName);
-        console.log(`Reply to ${senderId}: ${reply}`);
-        
-        await sendMessage(senderId, reply);
+      for (const event of entry.messaging) {
+        if (event.message && event.message.text) {
+          const senderId = event.sender.id;
+          const messageText = event.message.text;
+          
+          // Skip echo messages (messages sent by the page itself)
+          if (event.message.is_echo) continue;
+          
+          console.log(`Message from ${senderId}: ${messageText}`);
+          
+          const profile = await getUserProfile(senderId);
+          const userName = profile ? profile.name || profile.first_name : null;
+          
+          const reply = await generateResponse(senderId, messageText, userName);
+          
+          console.log(`Reply to ${senderId}: ${reply}`);
+          
+          await sendMessage(senderId, reply);
+        }
       }
-      
-      if (event.postback) {
-        const senderId = event.sender.id;
-        console.log(`Postback from ${senderId}: ${event.postback.payload}`);
+    }
+  } else {
+    res.sendStatus(404);
+  }
+});
+
+// ==================== LINE ====================
+
+// LINE webhook verification (responds 200 to any POST)
+app.post('/line-webhook', async (req, res) => {
+  res.status(200).send('OK');
+
+  const events = req.body.events || [];
+  for (const event of events) {
+    if (event.type === 'message' && event.message.type === 'text') {
+      const userId = event.source.userId;
+      const text = event.message.text;
+      const replyToken = event.replyToken;
+
+      console.log(`[LINE] Message from ${userId}: ${text}`);
+
+      try {
+        // Get LINE user profile for name
+        let userName = null;
+        try {
+          const profileRes = await axios.get(
+            `https://api.line.me/v2/bot/profile/${userId}`,
+            { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } }
+          );
+          userName = profileRes.data.displayName;
+        } catch (e) {
+          console.error('LINE profile error:', e.message);
+        }
+
+        const reply = await generateResponse(`line_${userId}`, text, userName);
+        console.log(`[LINE] Reply to ${userId}: ${reply}`);
+
+        // Reply via LINE Messaging API
+        await axios.post(
+          'https://api.line.me/v2/bot/message/reply',
+          {
+            replyToken: replyToken,
+            messages: [{ type: 'text', text: reply }]
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+            }
+          }
+        );
+      } catch (err) {
+        console.error('[LINE] Error:', err.message);
       }
     }
   }
@@ -388,7 +362,7 @@ app.post('/webhook', async (req, res) => {
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('Lovenote Min is alive! 🎃');
+  res.send('Lovenote Min is alive! ðŸŽƒ');
 });
 
 // Privacy Policy
